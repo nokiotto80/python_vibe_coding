@@ -21,7 +21,7 @@ class DigitalClock:
         
         self.root = root
         self.root.title("Orologio Digitale 7 Segmenti")
-        self.root.geometry("650x270") # Dimensione della finestra
+        self.root.geometry("700x270") # Dimensione della finestra
         self.root.resizable(False, False) # Non ridimensionabile
 
         self.segment_color_on = "red"  # Colore dei segmenti accesi
@@ -53,12 +53,31 @@ class DigitalClock:
         }
         
         self.segments_map_lettere = {
-            'A': (True, True, True, False, True, True, True),  # A B C D E F G
-            'B': (True, True, True, True, True, True, True),#COME numero 8
-
-            ' ': (False, False, False, False, False, False, False) # Per spazio vuoto
+            # Lettere standard
+            'A': (True, True, True, False, True, True, True),  # A B C D E F G (A maiuscola)
+            'b': (False, False, True, True, True, True, True), # (B minuscola per chiarezza)
+            'C': (True, False, False, True, True, True, False), # (C maiuscola)
+            'd': (False, True, True, True, True, False, True), # (D minuscola per chiarezza)
+            'E': (True, False, False, True, True, True, True), # (E maiuscola)
+            'F': (True, False, False, False, True, True, True), # (F maiuscola)
+            'G': (True, False, True, True, True, True, False), # (G maiuscola)
+            'H': (False, True, True, False, True, True, True), # (H maiuscola)
+            'I': (False, False, False, False, True, False, False), # (Trattino centrale orizzontale)
+            'L': (False, False, False, True, True, True, False), # (L maiuscola)
+            'N': (False, True, True, False, True, False, True), # (N maiuscola con G laterale spento)
+            'O': (True, True, True, True, True, True, False),  # (O maiuscola - come cifra 0)
+            'P': (True, True, False, False, True, True, True), # (P maiuscola)
+            'r': (False, False, False, False, True, False, True), # (r minuscola per chiarezza)
+            
+            'S': (True, False, True, True, False, True, True),  # (S maiuscola - come cifra 5)
+            'T': (False, False, False, True, True, True, True), # (T/t minuscola, simile a 7 senza A)
+            'U': (False, True, True, True, True, True, False),  # (U maiuscola)
+            'V': (False, False, True, False, True, False, True), #(V maiuscola)
+            'Y': (False, True, True, True, False, True, True),  # (Y maiuscola)
+        
+            # Lettera per lo spazio vuoto
+            ' ': (False, False, False, False, False, False, False)
         }
-
         # Creazione del Canvas principale per il display dell'orologio
         self.canvas = tk.Canvas(root, bg=self.bg_color, highlightthickness=2)
        
@@ -71,13 +90,16 @@ class DigitalClock:
       
       # Carica l'immagine usando Pillow
          original_image = Image.open("/Users/macbook_vincenzo/Python/clock_icon.png")
+         original_image2= Image.open("/Users/macbook_vincenzo/Python/calendar.png")
       
       # Ridimensiona l'immagine se necessario (es. a 60x60 pixel)
        # Puoi regolare queste dimensioni in base a quanto vuoi che sia grande l'icona
          resized_image = original_image.resize((50, 50), Image.LANCZOS) # o Image.LANCZOS per migliore qualità
+         resized_image2=original_image2.resize((50,50),Image.LANCZOS)
        
       # Converte l'immagine Pillow in un formato che Tkinter può usare
          self.clock_icon = ImageTk.PhotoImage(resized_image)
+         self.date_icon = ImageTk.PhotoImage(resized_image2)
       
       # Mostra l'icona dell'orologio prima dell'ora
       # Le coordinate (x, y) definiscono il centro dell'immagine per anchor="center"
@@ -85,6 +107,7 @@ class DigitalClock:
       # Regola le coordinate 50, 50 in base a dove vuoi posizionare l'icona
       # Il 50 in X è una posizione di esempio, potresti volerlo più a sinistra
          self.canvas.create_image(25, self.digit_height / 2 + self.padding, anchor="w",image=self.clock_icon)
+         self.canvas.create_image(25, self.digit_height / 2 + self.padding +150, anchor="w",image=self.date_icon)
       
         except FileNotFoundError:
          print("Errore: Immagine 'clock_icon.png' non trovata. Assicurati che il percorso sia corretto.")
@@ -117,17 +140,51 @@ class DigitalClock:
         self.digits.append(self.create_digit_display(self.padding + 5 * (self.digit_width + self.padding) + 2 * self.colon_width + 2 * self.padding)) # Seconda cifra secondi
          
      ##TEST visualizzazione lettera
-         # Sposta la lettera alla stessa posizione X della prima cifra dell'ora
-        x_offset_lettera1 = self.padding
-        y_offset_lettera1 = self.padding + self.digit_height + 50
-
-        self.letters.append(self.create_digit_display(x_offset_lettera1, y_offset=y_offset_lettera1)) # Prima cifra lettera
-        # Aggiungi un secondo display per la seconda lettera, posizionandolo dopo la prima
+        BASE_Y_OFFSET = self.padding + self.digit_height + 50 #la Y(altezza) NON cambia, è la X (orizzontale) che varia
+        
+        # --- PRIMA LETTERA (N) ---
+        x_offset_lettera1 = self.padding 
+        self.letters.append(self.create_digit_display(x_offset_lettera1, y_offset=BASE_Y_OFFSET))
+        
+        # --- SECONDA LETTERA (O) ---
+        # X: Spostati a destra del primo display (larghezza + padding)
         x_offset_lettera2 = x_offset_lettera1 + self.digit_width + self.padding
-        self.letters.append(self.create_digit_display(x_offset_lettera2, y_offset=y_offset_lettera1)) # Seconda lettera
-
-                ##fine test lettera
-        # Inizializza l'orologio
+        # Y: Usa lo stesso offset BASE_Y_OFFSET
+        self.letters.append(self.create_digit_display(x_offset_lettera2, y_offset=BASE_Y_OFFSET))
+        
+        # --- TERZA LETTERA (V) ---
+        # X: Spostati a destra del secondo display
+        x_offset_lettera3 = x_offset_lettera2 + self.digit_width + self.padding
+        # Y: Usa lo stesso offset BASE_Y_OFFSET
+        self.letters.append(self.create_digit_display(x_offset_lettera3, y_offset=BASE_Y_OFFSET))
+        
+        ## FINE TEST
+        # --- SPAZIO (Display 4) ---
+        x_offset_spazio = x_offset_lettera3 + self.digit_width + self.padding
+        self.letters.append(self.create_digit_display(x_offset_spazio, y_offset=BASE_Y_OFFSET))
+        
+        # --- GIORNO DECINA (Display 5) ---
+        x_offset_giorno1 = x_offset_spazio + self.digit_width + self.padding
+        self.letters.append(self.create_digit_display(x_offset_giorno1, y_offset=BASE_Y_OFFSET))
+        
+        # --- GIORNO UNITÀ (Display 6) ---
+        x_offset_giorno2 = x_offset_giorno1 + self.digit_width + self.padding
+        self.letters.append(self.create_digit_display(x_offset_giorno2, y_offset=BASE_Y_OFFSET))
+  
+                # Update: 2012026 SECONDO SPAZIO (Display 7, Indice [6]) ---
+        x_offset_spazio2 = x_offset_giorno2 + self.digit_width + self.padding
+        self.letters.append(self.create_digit_display(x_offset_spazio2, y_offset=BASE_Y_OFFSET))
+        
+        # Update: 2012026 ANNO DECINA (Display 8, Indice [7]) ---
+        x_offset_anno1 = x_offset_spazio2 + self.digit_width + self.padding
+        self.letters.append(self.create_digit_display(x_offset_anno1, y_offset=BASE_Y_OFFSET))
+        
+        # --- ANNO UNITÀ (Display 9, Indice [8]) ---
+        x_offset_anno2 = x_offset_anno1 + self.digit_width + self.padding
+        self.letters.append(self.create_digit_display(x_offset_anno2, y_offset=BASE_Y_OFFSET))
+        
+            # 2. SOLO ORA CHIAMA L'AGGIORNAMENTO
+        # Questa riga deve essere DOPO tutti gli append!
         self.update_clock()
 
     # Funzione per creare un display per una singola cifra (7 segmenti)
@@ -233,14 +290,12 @@ class DigitalClock:
     # Funzione per aggiornare l'orologio
     def update_clock(self):
       
-        
         current_time = time.strftime("%H%M%S") # Formato HHMMSS
-        current_data = time.strftime("%G%M%Y")
+        current_data = time.strftime("%d%m%y") # Formato GGMMYY
         current_hour = int(current_time[0:2]) # Estrai l'ora come intero
         current_minute = int(current_time[2:4]) # Estrai i minuti come intero
         current_second = int(current_time[4:6]) # Estrai i secondi come intero
         
-
         
         # Aggiorna le cifre delle ore
         self.set_digit(self.digits[0], current_time[0]) # Prima cifra ora
@@ -254,11 +309,58 @@ class DigitalClock:
         self.set_digit(self.digits[4], current_time[4]) # Prima cifra secondo
         self.set_digit(self.digits[5], current_time[5]) # Seconda cifra secondo
         
-        #####TEST VISUALIZZAZIONE DI UNA LETTERA
+        # # Aggiorna le cifre de giorno della DATA
+        # self.set_digit(self.date_digits[0], current_data[0]) # Prima cifra del giorno
+        # self.set_digit(self.date_digits[1], current_data[1]) # Seconda cifra del giorno
         
-        self.set_letters(self.letters[0], 'A') # Prima cifra data
+        # Recupera il giorno corrente (es. "02")
+        current_day = time.strftime("%d") 
         
-        self.set_letters(self.letters[1], 'B') # seconda cifra data
+        # Recupera l'anno corrente (es. "26")
+        current_year = time.strftime("%y") 
+        
+       # 1. Recupera il numero del mese corrente (01, 02, ... 12)
+        month_number = int(time.strftime("%m"))
+        
+        # 2. Crea il dizionario dei mesi
+        months_map = {
+            1: "GEN", 2: "FEB", 3: "MAr", 4: "APr",
+            5: "MAG", 6: "GIU", 7: "LUG", 8: "AGO",
+            9: "SET", 10: "OTT", 11: "NOV", 12: "DIC"
+        }
+        
+        # 3. Prendi la stringa corrispondente (es. "GEN")
+        current_month_str = months_map[month_number]
+        
+        
+        # 3. Imposta le cifre del GIORNO (5° e 6° display, indici [4] e [5])
+        # Usiamo set_digit perché sono numeri!
+        self.set_digit(self.letters[0], current_day[0]) # Decina del giorno
+        self.set_digit(self.letters[1], current_day[1]) # Unità del giorno
+        
+        # 2. Imposta lo SPAZIO (il 4° display, indice [3])
+        # Assicurati di avere ' ': (False, False, False, False, False, False, False) nella mappa
+        self.set_letters(self.letters[2], ' ') 
+        
+        
+        # 4. Invia le lettere ai primi 3 display
+        self.set_letters(self.letters[3], current_month_str[0]) # Prima lettera MESE
+        self.set_letters(self.letters[4], current_month_str[1]) # Seconda lettera MESE
+        self.set_letters(self.letters[5], current_month_str[2]) # Terza lettera MESE
+        
+   
+ 
+        
+        # A questo punto, completo ,con la stessa logica, array, 
+        #con un altro spazio e l'ANNO pure vai!
+        # In questo:
+        self.set_letters(self.letters[6], ' ')
+        
+        # 3. Imposta le cifre per l'ANNO (5° e 6° display, indici [7] e [8])
+        # Usiamo set_digit perché sono numeri!
+        self.set_digit(self.letters[7], current_year[0]) # Decina dell'ANNO
+        self.set_digit(self.letters[8], current_year[1]) # Unità dell'ANNO
+
         #################FINE TEST
 
 
@@ -296,9 +398,7 @@ class DigitalClock:
         # Applica il colore al primo gruppo di due punti (self.colons[0])
         for dot in self.colons[0]:
             self.canvas.itemconfig(dot, fill=hours_colon_color, outline=hours_colon_color)
-
-
-        
+            
         # Chiamata ricorsiva dopo 1 secondo
         self.root.after(1000, self.update_clock)
 
