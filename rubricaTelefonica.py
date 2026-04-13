@@ -2,12 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Feb 28 19:24:15 2025
+Crea una rubrica con funzioni C.R.U.D. (Create Read Update and Delete)
+-dapprima a LISTVIEW
+
+-poi convertita in TreeView
+
 
 @author: macbook_vincenzo
 """
 
 import tkinter as tk
-from tkinter import Toplevel, messagebox
+from tkinter import Toplevel, messagebox,ttk
 from PIL import Image, ImageTk  # Per gestire immagini (potrebbe essere necessario installare: pip install Pillow)
 import random
 import sqlite3
@@ -16,7 +21,7 @@ import os
 class RubricaTelefonica:
     def __init__(self, root):
         self.root = root
-        self.root.title("Rubrica Telefonica")
+        self.root.title("Phone Book")
 
         # Connessione al database
         self.conn = sqlite3.connect("rubrica.db")
@@ -32,6 +37,7 @@ class RubricaTelefonica:
             )
         """)
         self.conn.commit()
+        
         
         # Configura il ridimensionamento della finestra principale (root)
       # La colonna 1 (quella con le entry e la listbox) si espanderà
@@ -68,16 +74,32 @@ class RubricaTelefonica:
        tk.Button(button_frame, text="Elimina", command=self.elimina_contatto).pack(side=tk.LEFT, padx=5)
        tk.Button(button_frame, text="Pulisci Campi", command=self.pulisci_campi).pack(side=tk.LEFT, padx=5)
 
-       # Lista contatti. Aggiunte opzioni 'sticky="nswe"' per consentire l'agganciare 
-       self.lista_contatti = tk.Listbox(self.root, height=15) # Rimosso 'width' per farlo espandere
-       self.lista_contatti.grid(row=4, column=0, columnspan=2, padx=5, pady=5, sticky="nswe") # Modifica: aggiunto sticky="nswe"
-
-       # Scrollbar per la lista
-       scrollbar = tk.Scrollbar(self.root, orient="vertical", command=self.lista_contatti.yview)
-       scrollbar.grid(row=4, column=2, sticky="ns")
+           # Lista contatti. Aggiunte opzioni 'sticky="nswe"' per consentire l'agganciare 
+        # Con queste righe per il Treeview:
+       self.lista_contatti = ttk.Treeview(self.root, columns=("Nome", "Telefono", "Email"), show="headings")
+       self.lista_contatti.heading("Nome", text="Nome")
+       self.lista_contatti.heading("Telefono", text="Telefono")
+       self.lista_contatti.heading("Email", text="Email")
+            
+            # Imposta anche le larghezze delle colonne (opzionale)
+       self.lista_contatti.column("Nome", width=150)
+       self.lista_contatti.column("Telefono", width=150)
+       self.lista_contatti.column("Email", width=200)
+            
+       self.lista_contatti.grid(row=4, column=0, columnspan=2, padx=5, pady=5, sticky="nswe")
+               # Scrollbar per la list
+              
 
        # # Collega la selezione della Listbox
-       self.lista_contatti.bind('<<ListboxSelect>>', self.selected_item)
+       # E sostituiscila con questa
+       self.lista_contatti.bind('<<TreeviewSelect>>', self.selected_item)
+      
+       scrollbar = tk.Scrollbar(self.root, orient="vertical", command=self.lista_contatti.yview)
+       scrollbar.grid(row=4, column=2, sticky="ns")
+       
+       # Collega il Treeview allo Scrollbar.
+           
+       self.lista_contatti.configure(yscrollcommand=scrollbar.set) # Questa riga è cruciale e mancava nel tuo codice.
 
     def aggiungi_contatto(self):
         nome = self.nome_entry.get()
@@ -119,20 +141,22 @@ class RubricaTelefonica:
         # Genera le liste di immagini basate sui file
         immagini_gatti = get_images_from_folder(IMMAGINI_FOLDER, "gatto")
         immagini_cani = get_images_from_folder(IMMAGINI_FOLDER, "cane")
+        immagini_orologi = get_images_from_folder(IMMAGINI_FOLDER, "orologio")
+        
         immagini_misti = get_images_from_folder(IMMAGINI_FOLDER, "misti")
 
         if not immagini_gatti or not immagini_cani or not immagini_misti:
             messagebox.showerror("Errore CAPTCHA", f"Impossibile trovare le immagini del CAPTCHA. Controlla il percorso: '{IMMAGINI_FOLDER}'")
             return
 
-        # Scegli 3 o 4 gatti casualmente
-        num_gatti = random.choice([3, 4])
-        num_altri = 9 - num_gatti
-
-        self.captcha_corrette = random.sample(immagini_gatti, k=num_gatti)
+        num_cani = random.choice([3, 4])
+        num_orologi = random.choice([3, 4])
+        num_altri = 9 - num_orologi
         
-        # Unisci cani e misti e prendi le immagini rimanenti
-        immagini_sbagliate_pool = random.sample(immagini_cani, k=3) + random.sample(immagini_misti, k=3)
+        self.captcha_corrette = random.sample(immagini_orologi, k=num_orologi)
+        
+        # Unisci i due dataset SBAGLIATI (es se voglio mostrare gli orologi, mischio i cani, i gatti e i misti)
+        immagini_sbagliate_pool = immagini_cani + immagini_gatti + immagini_misti
         self.captcha_totali = self.captcha_corrette + random.sample(immagini_sbagliate_pool, k=num_altri)
         random.shuffle(self.captcha_totali)
 
@@ -140,7 +164,7 @@ class RubricaTelefonica:
         self.captcha_window.title("Verifica di sicurezza")
         self.captcha_window.geometry("300x370")
         
-        tk.Label(self.captcha_window, text=f"Seleziona tutte le caselle con un GATTO ({num_gatti} in totale)", font=("Helvetica", 12, "bold")).pack(pady=10)
+        tk.Label(self.captcha_window, text=f"Seleziona tutte le caselle con un OROLOGIO ({num_orologi} in totale)", font=("Helvetica", 12, "bold")).pack(pady=10)
 
         self.selezione_utente = [tk.BooleanVar(value=False) for _ in range(9)]
         grid_frame = tk.Frame(self.captcha_window)
@@ -199,11 +223,16 @@ class RubricaTelefonica:
                 tk.messagebox.showerror("Errore", f"Si è verificato un errore durante l'aggiunta: {e}")
 
     def visualizza_contatti(self):
-        self.lista_contatti.delete(0, tk.END)
+        # Pulisci il Treeview
+        for item in self.lista_contatti.get_children():
+            self.lista_contatti.delete(item)
+    
         self.cursor.execute("SELECT id, nome, telefono, email FROM contatti ORDER BY nome")
+        
         for row in self.cursor.fetchall():
-        # ✅ Modifica questa riga per includere l'ID nel formato (ID: 123)
-            self.lista_contatti.insert(tk.END, f"{row[1]} - {row[2]} (ID: {row[0]})")
+            # Inserisci i dati nelle colonne specificando la tupla 'values'
+            # Salviamo l'ID in un attributo nascosto 'iid' o 'text'
+            self.lista_contatti.insert("", tk.END, iid=row[0], values=(row[1], row[2], row[3]))
             
 
     def aggiorna_contatto(self):
@@ -217,7 +246,7 @@ class RubricaTelefonica:
       
       
         # 2. Ottieni l'ID del contatto selezionato dalla Listbox
-      selected_indices = self.lista_contatti.curselection()
+      selected_indices = self.lista_contatti._selection()
       if not selected_indices:
             print("DEBUG: Nessun contatto selezionato.")
             tk.messagebox.showwarning("Attenzione", "Seleziona un contatto dalla lista per aggiornare.")
@@ -277,53 +306,43 @@ class RubricaTelefonica:
 
     def __del__(self): #chiudi la connessione
         self.conn.close()
+        
+    def pulisci_campi(self):
+          self.nome_entry.delete(0, tk.END)
+          self.telefono_entry.delete(0, tk.END)
+          self.email_entry.delete(0, tk.END)
+
   
     def selected_item(self, event=None):
-        # Ottieni gli indici degli elementi selezionati
-        selected_indices = self.lista_contatti.curselection()
-
-        if selected_indices:
-            # Se c'è almeno un elemento selezionato...
-            
-            # 1. Pulisci i campi esistenti prima di caricare i nuovi dati
+    # Ottieni l'elemento selezionato. `selection()` restituisce una tupla di iid.
+        selected_item = self.lista_contatti.selection()
+    
+        if selected_item:
             self.pulisci_campi()
             
-            # 2. Ottieni l'indice e il testo selezionato
-            index = selected_indices[0]
-            selected_text = self.lista_contatti.get(index)
-            print(f"Indice selezionato: {index}")
-        
-
-
-            try:
-                # Cerca l'ID nel testo
-                id_start = selected_text.rfind("(ID: ")
-                if id_start != -1:
-                    contact_id = int(selected_text[id_start + 5:-1])
-                else:
-                    print("Errore: Impossibile estrarre l'ID dal testo selezionato.")
-                    return
-            except (ValueError, IndexError):
-                print("Errore durante la conversione dell'ID.")
-                return
-
-            # 3. Fai la query al database usando l'ID
+            # Recupera l'ID e i dati del contatto selezionato
+            item_id = selected_item[0] # Prende il primo (e unico) iid dalla selezione
+            contact_id = int(item_id)
+            
+            # Fai la query al database usando l'ID corretto
             self.cursor.execute("SELECT nome, telefono, email FROM contatti WHERE id = ?", (contact_id,))
             contact_data = self.cursor.fetchone()
-
-            # 4. Inserisci i dati recuperati nei campi di testo
+            
+            # Inserisci i dati recuperati nei campi di testo
             if contact_data:
                 nome, telefono, email = contact_data
                 self.nome_entry.insert(0, nome)
                 self.telefono_entry.insert(0, telefono)
                 self.email_entry.insert(0, email)
-            else:
-                pass 
-            
-    def pulisci_campi(self):
-        self.nome_entry.delete(0, tk.END)
-        self.telefono_entry.delete(0, tk.END)
-        self.email_entry.delete(0, tk.END)
+        else:
+            # Se non c'è NESSUN elemento selezionato, pulisci i campi.
+            # Questo gestisce il caso in cui l'utente deseleziona tutto.
+            self.pulisci_campi()
+                    
+        def pulisci_campi(self):
+            self.nome_entry.delete(0, tk.END)
+            self.telefono_entry.delete(0, tk.END)
+            self.email_entry.delete(0, tk.END)
     
 if __name__ == "__main__":
     root = tk.Tk()

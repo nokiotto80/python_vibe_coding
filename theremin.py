@@ -1,268 +1,249 @@
+#
+# Progetto: Theremin Digitale Interattivo
+# Data Ultimo Aggiornamento: 31 Gennaio 2026
+# Descrizione: Applicazione desktop in Python che simula un Theremin.
+#              Include un effetto speciale "UFO" per simulare suoni Sci-Fi anni '50.
+#
+# Funzionalità:
+# 1. Theremin Analogico: Controllo continuo di frequenza (X) e volume (Y).
+# 2. Theremin Discreto: Mappatura della posizione su note musicali specifiche.
+# 3. Effetto UFO 🛸: Genera un suono di accelerazione spaziale con animazione.
+# 4. Correzione Bug: Utilizzo dell'attributo 'active' per lo stream audio.
+#
+# Librerie: tkinter, sounddevice, numpy, threading
+#
+
 import tkinter as tk
 import math
-import numpy as np # Necessario per la manipolazione efficiente degli array audio
-import sounddevice as sd # Libreria per la generazione del suono
-import time # Per la gestione del tempo
+import numpy as np
+import sounddevice as sd
+import threading
+import time
 
 class Theremin:
     def __init__(self, root):
         """
-        Inizializza l'applicazione Theremin.
-        Configura la finestra principale, il canvas, 
-        lo switch per la modalità discreta(Questa è nuova , mai vista in giro)
-        e le variabili per la generazione del suono.
+        Inizializza l'interfaccia e le componenti audio.
         """
         self.root = root
-        self.root.title("Theremin Digitale")
-        self.root.geometry("600x650") # Imposta una dimensione iniziale per la finestra
-        self.root.resizable(False, False) # Rende la finestra non ridimensionabile per mantenere layout
+        self.root.title("Theremin Digitale - Sci-Fi Edition")
+        self.root.geometry("600x680")
+        self.root.resizable(False, False)
+        self.root.configure(bg="#1A1A1A")
 
-        # Configurazione del canvas per l'interazione
-        self.canvas = tk.Canvas(root, width=500, height=500, bg="black", bd=2, relief="sunken")
-        self.canvas.pack(pady=10, padx=10) # Aggiunge padding e un bordo al canvas
+        # Area di interazione
+        self.canvas = tk.Canvas(root, width=500, height=450, bg="black", highlightthickness=1, highlightbackground="#444")
+        self.canvas.pack(pady=20, padx=20)
 
-        # Frame per contenere lo switch e la label per la frequenza/ampiezza
-        self.control_frame = tk.Frame(root, bg="#333333")
-        self.control_frame.pack(pady=5)
+        # Frame controlli superiore
+        self.control_frame = tk.Frame(root, bg="#1A1A1A")
+        self.control_frame.pack(fill=tk.X, padx=20)
 
-        # Switch per alternare tra modalità analogica e discreta
+        # Switch Modalità
         self.switch_var = tk.BooleanVar()
         self.switch = tk.Checkbutton(
-            self.control_frame, # Posizionato nel nuovo frame
-            text="Modalità Discreta",
+            self.control_frame,
+            text="MODALITÀ DISCRETA",
             variable=self.switch_var,
             command=self.toggle_mode,
-            font=("Inter", 12, "bold"), # Font più leggibile
-            fg="white", # Colore del testo
-            bg="#444444", # Colore di sfondo del pulsante
-            selectcolor="#666666", # Colore quando selezionato
-            indicatoron=False, # Nasconde il quadratino di default, per uno stile più moderno
-            relief="raised", # Effetto 3D
-            borderwidth=3,
-            padx=15, # Padding interno
-            pady=8, # Padding interno
-            activebackground="#555555", # Colore quando il mouse è sopra
-            activeforeground="white"
+            font=("Helvetica", 10, "bold"),
+            fg="#EEE",
+            bg="#333",
+            selectcolor="#444",
+            indicatoron=False,
+            relief="flat",
+            padx=20,
+            pady=10,
+            activebackground="#555"
         )
-        self.switch.pack(side=tk.LEFT, padx=10) # Posiziona a sinistra nel frame
+        self.switch.pack(side=tk.LEFT)
 
-        # Label per mostrare frequenza e ampiezza
+        # Label Informazioni
         self.info_label = tk.Label(
-            self.control_frame, # Posizionato nel nuovo frame
-            text="Frequenza: --- Hz | Ampiezza: ---",
-            font=("Inter", 12),
-            fg="white",
-            bg="#333333"
+            self.control_frame,
+            text="Frequenza: --- Hz | Volume: ---",
+            font=("Consolas", 11),
+            fg="#00FF00",
+            bg="#1A1A1A",
+            padx=20
         )
-        self.info_label.pack(side=tk.LEFT, padx=10) # Posiziona a destra nel frame
+        self.info_label.pack(side=tk.RIGHT)
 
-        self.is_discrete = False # Stato iniziale: modalità analogica
-        self.points = [] # Lista per memorizzare le coordinate dei punti della costellazione
+        # Pulsante UFO 🛸
+        self.ufo_button = tk.Button(
+            root,
+            text="EFFETTO UFO 🛸",
+            command=self.trigger_ufo_effect,
+            font=("Helvetica", 12, "bold"),
+            fg="white",
+            bg="#6200EE",
+            activebackground="#3700B3",
+            activeforeground="white",
+            relief="raised",
+            pady=10
+        )
+        self.ufo_button.pack(fill=tk.X, padx=40, pady=10)
 
-        # Variabili per la mappatura del suono
-        self.min_frequency = 220  # Frequenza minima (La3)
-        self.max_frequency = 880  # Frequenza massima (La4)
-        self.min_amplitude = 0.0  # Ampiezza minima (silenzio)
-        self.max_amplitude = 1.0  # Ampiezza massima (volume massimo)
+        # Parametri Audio
+        self.sample_rate = 44100
+        self.min_freq = 220.0
+        self.max_freq = 1200.0 # Aumentata un po' per effetti più acuti
+        self.current_frequency = self.min_freq
+        self.current_amplitude = 0.0
+        self.phase = 0.0
+        self.stream = None
+        self.is_playing = False
+        self.is_discrete = False
+        self.points = []
+        self.ufo_active = False
 
-        self.current_frequency = self.min_frequency # Frequenza iniziale
-        self.current_amplitude = self.max_amplitude / 2 # Ampiezza iniziale a metà
-
-        # Variabili per la gestione dello stream audio continuo
-        self.sample_rate = 44100 # Frequenza di campionamento standard (Hz)
-        self.phase = 0.0 # Fase corrente dell'onda sinusoidale per continuità
-        self.stream = None # Oggetto stream di sounddevice
-        self.is_playing = False # Flag per indicare se il suono è in riproduzione
-
-        # Binding degli eventi del mouse al canvas
-        # <Button-1> si attiva quando il tasto sinistro del mouse viene premuto (una volta)
+        # Eventi Mouse
         self.canvas.bind("<Button-1>", self.start_sound)
-        # <B1-Motion> si attiva quando il tasto sinistro del mouse è premuto e il mouse si muove
-        self.canvas.bind("<B1-Motion>", self.update_sound_parameters)
-        # <ButtonRelease-1> si attiva quando il tasto sinistro del mouse viene rilasciato
+        self.canvas.bind("<B1-Motion>", self.update_params)
         self.canvas.bind("<ButtonRelease-1>", self.stop_sound)
 
-        # Configurazione dello stile della finestra principale
-        self.root.configure(bg="#333333") # Sfondo scuro per la finestra
+        self.root.update_idletasks()
+        self.generate_grid()
 
-        # Genera i punti della costellazione dopo che il canvas ha le sue dimensioni finali
-        self.root.update_idletasks() # Forza Tkinter a calcolare le dimensioni del canvas
-        self.generate_points() # Ora genera i punti con le dimensioni corrette del canvas
-
-    def generate_points(self):
-        """
-        Genera i punti per la modalità discreta, disponendoli in una griglia uniforme
-        sull'intera superficie del canvas, simile a un tabellone di Forza 4.
-        """
-        self.points = [] # Resetta la lista dei punti
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-
-        point_spacing_x = 50
-        point_spacing_y = 50
-
-        num_cols = math.floor(canvas_width / point_spacing_x)
-        num_rows = math.floor(canvas_height / point_spacing_y)
-
-        margin_x = (canvas_width - (num_cols * point_spacing_x)) / 2 + point_spacing_x / 2
-        margin_y = (canvas_height - (num_rows * point_spacing_y)) / 2 + point_spacing_y / 2
-
-        for row in range(num_rows):
-            for col in range(num_cols):
-                x = margin_x + col * point_spacing_x
-                y = margin_y + row * point_spacing_y
+    def generate_grid(self):
+        """Genera i punti per la modalità discreta."""
+        self.points = []
+        w, h = 500, 450
+        step = 50
+        for x in range(step, w, step):
+            for y in range(step, h, step):
                 self.points.append((x, y))
 
     def toggle_mode(self):
-        """
-        Alterna la modalità del Theremin tra analogica e discreta.
-        Pulisce il canvas e ridisegna i punti se si passa alla modalità discreta.
-        """
+        """Passa da modalità continua a discreta."""
         self.is_discrete = self.switch_var.get()
-        self.stop_sound(None) # Ferma il suono quando si cambia modalità
-        self.canvas.delete("all") # Pulisce tutti gli elementi disegnati sul canvas
-        self.generate_points() # Rigenera i punti ogni volta che si cambia modalità
+        self.canvas.delete("all")
         if self.is_discrete:
-            self.draw_points() # Disegna la costellazione di punti se la modalità è discreta
-        self.update_info_label() # Aggiorna la label quando la modalità cambia
+            for x, y in self.points:
+                self.canvas.create_oval(x-2, y-2, x+2, y+2, fill="#555", outline="")
+        self.update_info()
 
-    def draw_points(self):
-        """
-        Disegna tutti i punti della costellazione sul canvas.
-        """
-        for x, y in self.points:
-            self.canvas.create_oval(x - 4, y - 4, x + 4, y + 4, fill="white", outline="white", width=1)
-
-    def _audio_callback(self, outdata, frames, time_info, status):
-        """
-        Funzione di callback chiamata da sounddevice per riempire il buffer audio.
-        Genera campioni di onda sinusoidale in base a frequenza e ampiezza correnti.
-        """
-        if status:
-            print(f"Audio callback status: {status}") # Stampa eventuali avvisi o errori dallo stream audio
-
-        # Assicura che la frequenza non sia zero o negativa
-        freq = max(1.0, self.current_frequency)
-        amp = max(0.0, min(1.0, self.current_amplitude))
-
-        # Genera i campioni dell'onda sinusoidale per il blocco corrente
+    def _audio_callback(self, outdata, frames, time, status):
+        """Genera l'onda sinusoidale in tempo reale."""
         t = (self.phase + np.arange(frames)) / self.sample_rate
-        samples = amp * np.sin(2 * np.pi * freq * t)
-
-        # Scrive i campioni nell'output buffer
-        outdata[:] = samples.reshape(-1, 1) # Reshape per canale mono
-
-        # Aggiorna la fase per la continuità del suono
+        samples = self.current_amplitude * np.sin(2 * np.pi * self.current_frequency * t)
+        outdata[:] = samples.reshape(-1, 1)
         self.phase = (self.phase + frames) % self.sample_rate
 
     def start_sound(self, event):
-        """
-        Avvia lo stream audio quando il tasto del mouse viene premuto.
-        """
+        """Avvia lo stream audio."""
+        if self.ufo_active: return # Non interrompere l'effetto UFO se attivo
         if not self.is_playing:
             try:
-                # Crea e avvia un nuovo stream audio non bloccante con la callback
                 self.stream = sd.OutputStream(
                     samplerate=self.sample_rate,
-                    channels=1, # Canale mono
-                    dtype=np.float32, # Formato dati
-                    callback=self._audio_callback # La nostra funzione di generazione audio
+                    channels=1,
+                    dtype='float32',
+                    callback=self._audio_callback
                 )
                 self.stream.start()
                 self.is_playing = True
-                # Aggiorna i parametri audio immediatamente all'avvio del suono
-                self.update_sound_parameters(event)
-                # Rimosse le stampe da console, ora usiamo la label
+                self.update_params(event)
             except Exception as e:
-                print(f"Errore all'avvio dello stream audio: {e}")
-                self.is_playing = False
-                if self.stream:
-                    self.stream.close()
-                self.stream = None
+                print(f"Errore Audio: {e}")
 
-    def update_sound_parameters(self, event):
-        """
-        Aggiorna la frequenza e l'ampiezza del suono in base alla posizione del mouse.
-        Questa funzione aggiorna solo le variabili, la callback si occupa della generazione.
-        """
-        if not self.is_playing: # Non aggiornare se il suono non è attivo
-            return
+    def update_params(self, event):
+        """Aggiorna frequenza e volume in base alla posizione."""
+        if not self.is_playing or self.ufo_active: return
 
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-
-        target_x = event.x
-        target_y = event.y
+        x, y = event.x, event.y
+        w, h = 500, 450
 
         if self.is_discrete:
-            # In modalità discreta, trova il punto della costellazione più vicino al cursore
-            if not self.points:
-                self.generate_points()
-                if not self.points: return
+            dists = [math.dist((x, y), p) for p in self.points]
+            idx = dists.index(min(dists))
+            x, y = self.points[idx]
+            
+            self.canvas.delete("cursor")
+            self.canvas.create_oval(x-6, y-6, x+6, y+6, outline="#00FF00", width=2, tags="cursor")
+        
+        nx = max(0, min(1, x / w))
+        ny = max(0, min(1, y / h))
 
-            distances = [math.sqrt((target_x - x)**2 + (target_y - y)**2) for x, y in self.points]
-            closest_point_index = distances.index(min(distances))
-            closest_point = self.points[closest_point_index]
+        self.current_frequency = self.min_freq + (self.max_freq - self.min_freq) * nx
+        self.current_amplitude = 1.0 - ny 
+        
+        self.update_info()
 
-            normalized_x = closest_point[0] / canvas_width
-            normalized_y = closest_point[1] / canvas_height
-
-            # Evidenzia il punto selezionato
-            self.canvas.delete("highlight") # Rimuove il vecchio highlight
-            self.canvas.create_oval(
-                closest_point[0] - 6, closest_point[1] - 6,
-                closest_point[0] + 6, closest_point[1] + 6,
-                fill="red", outline="red", width=2, tags="highlight"
-            )
-
+    def update_info(self):
+        """Aggiorna la label testuale."""
+        if self.is_playing:
+            text = f"Freq: {self.current_frequency:.1f} Hz | Vol: {self.current_amplitude:.2f}"
+        elif self.ufo_active:
+            text = "🛸 MANOVRA UFO IN CORSO..."
         else:
-            # In modalità analogica, usa direttamente le coordinate del mouse
-            normalized_x = target_x / canvas_width
-            normalized_y = target_y / canvas_height
-            self.canvas.delete("highlight") # Rimuove l'highlight se si torna in analogico
+            text = "Frequenza: --- Hz | Volume: ---"
+        self.info_label.config(text=text)
 
+    def trigger_ufo_effect(self):
+        """Avvia l'effetto sonoro e visivo dell'UFO."""
+        if self.ufo_active: return
+        self.stop_sound()
+        self.ufo_active = True
+        self.ufo_button.config(state=tk.DISABLED, bg="#333")
+        threading.Thread(target=self._ufo_sequence, daemon=True).start()
 
-        # Limita i valori normalizzati tra 0 e 1
-        normalized_x = max(0.0, min(1.0, normalized_x))
-        normalized_y = max(0.0, min(1.0, normalized_y))
+    def _ufo_sequence(self):
+        """Sequenza sonora di accelerazione UFO."""
+        duration = 2.5 # secondi
+        steps = 100
+        sleep_time = duration / steps
+        
+        # Inizializza audio per l'effetto
+        try:
+            with sd.OutputStream(samplerate=self.sample_rate, channels=1, dtype='float32') as stream:
+                # Creazione animazione sul canvas
+                ufo_icon = self.canvas.create_text(0, 225, text="🛸", font=("Helvetica", 32), fill="white")
+                
+                start_f = 100.0
+                end_f = 2000.0 # Frequenza che sale oltre i limiti umani per simulare l'allontanamento
+                
+                phase = 0.0
+                for i in range(steps):
+                    # Calcolo progressione non lineare (accelerazione esponenziale)
+                    progress = i / steps
+                    freq = start_f + (end_f - start_f) * (progress ** 2)
+                    
+                    # Volume che aumenta e poi svanisce (effetto passaggio)
+                    vol = 0.5 * math.sin(math.pi * progress) 
+                    
+                    # Generazione piccolo chunk audio
+                    num_frames = int(self.sample_rate * sleep_time)
+                    t = (phase + np.arange(num_frames)) / self.sample_rate
+                    chunk = vol * np.sin(2 * np.pi * freq * t)
+                    stream.write(chunk.astype('float32'))
+                    
+                    phase += num_frames
+                    
+                    # Aggiornamento UI (manovra da sinistra a destra)
+                    x_pos = progress * 550
+                    self.canvas.coords(ufo_icon, x_pos, 225 - (progress * 100)) # Sale anche verso l'alto
+                    time.sleep(0.01) # Piccolo delay per fluidità animazione
 
-        # Aggiorna le variabili di frequenza e ampiezza
-        self.current_frequency = self.min_frequency + (self.max_frequency - self.min_frequency) * normalized_x
-        self.current_amplitude = self.max_amplitude - (self.max_amplitude - self.min_amplitude) * normalized_y
+                self.canvas.delete(ufo_icon)
+        except Exception as e:
+            print(f"Errore effetto UFO: {e}")
+        
+        self.ufo_active = False
+        self.root.after(0, lambda: self.ufo_button.config(state=tk.NORMAL, bg="#6200EE"))
+        self.root.after(0, self.update_info)
 
-        self.update_info_label() # <--- AGGIUNTA: Aggiorna la label con i nuovi valori
-
-    def update_info_label(self):
-        """
-        Aggiorna il testo della label con la frequenza e l'ampiezza attuali.
-        """
-        self.info_label.config(
-            text=f"Frequenza: {self.current_frequency:.2f} Hz | Ampiezza: {self.current_amplitude:.2f}"
-        )
-
-    def stop_sound(self, event=None): # event=None per permettere chiamate senza evento del mouse
-        """
-        Ferma la riproduzione audio quando il tasto del mouse viene rilasciato o la modalità cambiata.
-        """
-        print("stop_sound chiamata.") # DEBUG: Stampa quando la funzione viene chiamata
+    def stop_sound(self, event=None):
+        """Ferma lo stream audio manuale."""
         if self.stream and self.stream.active:
             self.stream.stop()
             self.stream.close()
-            print("Stream fermato e chiuso.") # DEBUG: Stampa quando lo stream viene effettivamente fermato
-        else:
-            print("Nessuno stream attivo da fermare.") # DEBUG: Stampa se non c'è stream attivo
-        self.stream = None # Resetta lo stream
-        self.is_playing = False # Resetta il flag di riproduzione
-        self.canvas.delete("highlight") # Rimuove l'highlight al rilascio del mouse
-        self.info_label.config(text="Frequenza: --- Hz | Ampiezza: ---") # Resetta la label
-
+        self.stream = None
+        self.is_playing = False
+        self.canvas.delete("cursor")
+        self.update_info()
 
 if __name__ == "__main__":
-    # Inizializza la finestra Tkinter e l'applicazione Theremin
     root = tk.Tk()
     app = Theremin(root)
     root.mainloop()
-
-    # Assicurati di chiudere lo stream audio quando l'applicazione si chiude
-    if app.stream:
-        app.stream.close()

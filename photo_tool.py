@@ -1,6 +1,54 @@
+"""
+================================================================================
+PROGETTO: Photo Editor Tool (V. 2.0)
+================================================================================
+
+AUTORI:
+    - Sviluppatore Principale: MacbookVincenzo
+    - Co-sviluppatore/Assistente AI: Google Gemini (Modello Flash 2.5)
+
+DATA DI INIZIO PROGETTO:
+    - 2024-05-10 (Data del primo scambio)
+
+STORICO AGGIORNAMENTI PRINCIPALI:
+    - 2024-05-15: Implementazione Filtro Canny (Rilevamento Bordi) e Punti.
+    - 2024-05-20: Integrazione PyTorch per accelerazione GPU (MPS) su filtri.
+    - 2024-05-25: Aggiunta Funzionalità Drag-and-Drop (tkdnd).
+    - 2024-05-30: Implementazione Rilevamento e Sfocatura Volti/Targhe (OpenCV Haar Cascade).
+    - 2024-06-05: Aggiunta Funzionalità Zoom Adattativo con mantenimento Aspect Ratio.
+    - 2024-12-05: Aggiunta Gestione File Vettoriali SVG (Rasterizzazione con cairosvg).
+    -2025-19-12:  AGGIUNGIAMO una palette (visualizza i colori realemnte usati) e sua gestione 
+
+FUNZIONI E CAPACITÀ PRINCIPALI:
+    - Gestione Multi-formato (Raster: JPG, PNG, Vettoriale: SVG).
+    - Manipolazione Filtri Immagine (Bianco/Nero, Saturazione, Luminosità).
+    - Effetti Artistici (Cartoonize, Warp/Distorsione).
+    - Generazione Puzzle "Unisci i Puntini" con campionamento intelligente.
+    - Rilevamento e Offuscamento Privacy (Volti, Targhe) tramite Haar Cascades.
+    - Interfaccia Utente Reattiva: Zoom Adattativo e Drag-and-Drop.
+    - Accelerazione dei calcoli complessi tramite GPU (MPS/PyTorch) con threading.
+
+FUNZIONALITÀ NON RIUSCITE (e risolte/abbandonate):
+    - Iniziale difficoltà con l'importazione di TkinterDnD2.
+    - Iniziale rilevamento incompleto dei volti in prospettiva.
+    - Iniziale blocco dell'UI dovuto a calcoli pesanti su CPU.
+
+NOTE SULL'ARCHITETTURA:
+    - Uso di Tkinter/ttk per la GUI.
+    - Uso di PIL/Pillow per la manipolazione base delle immagini.
+    - Uso di OpenCV (cv2) per la Computer Vision avanzata.
+    - Uso di PyTorch per l'accelerazione GPU.
+    - Uso di cairosvg per la gestione dei vettoriali.
+"""
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ImageFilter, ExifTags,ImageDraw, ImageFont
+
+#5/12/2025: introduciamo(con l'aiuto di San Gemini google) la funzione che permette di aprire e gestire
+#i file di grafica vettoriale SVG
+
+import cairosvg
+from io import BytesIO  # Per gestire i dati binari in memoria
 
 
 # import TkinterDnD2 as tkdnd
@@ -17,6 +65,8 @@ import torch
 import torch.nn.functional as F
 from rembg import remove
 import io
+#2012026: per motion blur(foto mosse)
+from PIL import ImageChops, ImageFilter
 
 class PhotoEditorApp:
     def __init__(self, master):
@@ -39,12 +89,15 @@ class PhotoEditorApp:
         self.warp_active = False
         # --- MODIFICHE PER EFFETTO "LENTE D'INGRANDIMENTO" ---
         self.warp_radius = 80  # Raggio più piccolo per un effetto più localizzato
-        self.warp_strength = 1.2 # Forza maggiore per un'ingrandimento più evidente
+        self.warp_strength = self.warp_radius*0.8 # Forza maggiore per un'ingrandimento più evidente, 25/12/2025: colllego anche la strenght, al radius selezionato
         # Puoi sperimentare con questi valori:
         # Per un raggio ancora più piccolo: 50
         # Per una forza ancora maggiore: 1.5 o 2.0
         # --- FINE MODIFICHE ---
         self.original_image_for_warp_tensor = None 
+        
+        #2012026: motion blur(foto mosse), variabile 
+        self.motion_blur_intensity = tk.IntVar(value=10) # Intensità di default
         
 
         self.is_grayscale_active = tk.BooleanVar(value=False)
@@ -86,208 +139,160 @@ class PhotoEditorApp:
         self.show_canvas_message("Clicca su 'APRI' per caricare un'immagine o 'ATTIVA FOTOCAMERA'")
 
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # 16/11/2025 Associa l'evento di ridimensionamento della finestra alla funzione di resize
+        self.master.bind('<Configure>', self.resize_image)
+        # Aggiungi queste righe nel tuo metodo __init__
+
+        # Dimensione fissa dei tuoi controlli laterali (stimali in base al tuo layout)
+        self.controls_width = 250 # Ad esempio, 250 pixel
+        # Altezza della barra di stato (stima)
+        self.status_bar_height = 30 # Ad esempio, 30 pixel
+        # Variabili per tracciare il ridimensionamento della finestra ed evitare loop
+        self.last_width = 0
+        self.last_height = 0
 
     def create_widgets(self):
-        # 1. Crea una cornice per i pulsanti (se non ce l'hai già)
-
-        self.status_bar = tk.Label(self.master, text="Nessuna immagine caricata.", bd=1, relief=tk.SUNKEN, anchor=tk.W, justify=tk.LEFT)
+        """
+        Metodo riorganizzato il 25/12/2025. 
+        Layout: Sidebar a sinistra, Canvas al centro/destra, Status bar sotto.
+    """
+        # --- 1. BARRE DI STATO (In basso) ---
+        self.status_bar = tk.Label(self.master, text="Nessuna immagine caricata.", bd=1, relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
+    
         self.warp_status_bar = tk.Label(self.master, text="Warp: OFF", bd=1, relief=tk.FLAT, anchor=tk.E, bg="lightblue", fg="darkblue", font=('Helvetica', 10, 'bold'))
         self.warp_status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        self.main_content_area = tk.Frame(self.master)
-        self.main_content_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-        button_frame = tk.Frame(self.main_content_area)
-        button_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
-
-        self.image_display_frame = tk.Frame(self.main_content_area, bg="lightgrey")
-        self.image_display_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        self.canvas = tk.Canvas(self.image_display_frame, bg="lightgrey", highlightthickness=0)
+    
+        # --- 0. INIZIALIZZAZIONE VARIABILI DI CONTROLLO ---
+        # Queste devono esistere PRIMA di creare gli slider
+        if not hasattr(self, 'cartoonize_factor'):
+            self.cartoonize_factor = tk.DoubleVar(value=0)
+        # --- 2. SIDEBAR (Sinistra) ---
+        # Usiamo un colore scuro per distinguere l'area dei comandi
+        self.sidebar_frame = tk.Frame(self.master, width=250, bg="#2e2e2e", padx=5, pady=5)
+        self.sidebar_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        self.sidebar_frame.pack_propagate(False) # Forza la larghezza a 250px
+    
+        # --- 3. AREA CONTENUTO PRINCIPALE (Destra/Centro) ---
+        self.main_area = tk.Frame(self.master, bg="lightgrey")
+        self.main_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    
+        # Canvas (figlio di main_area)
+        self.canvas = tk.Canvas(self.main_area, bg="lightgrey", highlightthickness=0)
         self.canvas.pack(expand=True, fill=tk.BOTH)
+        
         self.image_label = self.canvas.create_image(0, 0, anchor="nw")
-        
-        self.image_label_widget = self.canvas
-
-        self.image_label_widget.bind('<Motion>', self.handle_mouse_motion)
-        self.image_label_widget.bind('<Leave>', self.handle_mouse_leave)
-        
+        self.canvas.bind('<Motion>', self.handle_mouse_motion)
+        self.canvas.bind('<Leave>', self.handle_mouse_leave)
         self.canvas.bind('<Button-1>', self.on_mouse_down)
         self.canvas.bind('<B1-Motion>', self.on_mouse_drag)
         self.canvas.bind('<ButtonRelease-1>', self.on_mouse_up)
+    
+        # --- 4. POPOLAMENTO SIDEBAR (Comandi) ---
         
-        # Ora, rendi il canvas una zona di drop
-        # self.canvas.dnd_bind('<<Drop:DND_Files>>', self.handle_drop)
-        
-        # Crea e impacchetta il pulsante Warp nel button_frame
-        self.warp_toggle_button = tk.Button(button_frame, text="Warp: OFF", command=self.toggle_warp)
+        # Gruppo WARP
+        self.warp_toggle_button = tk.Button(self.sidebar_frame, text="ATTIVA WARP", command=self.toggle_warp)
         self.warp_toggle_button.pack(pady=5, fill=tk.X)
-        
-        #un altro Frame per i bottoni sotto a tutto,per impacchettare meglio
-        # Crea un frame separato per i controlli che vuoi sotto l'immagine
-        self.bottom_controls_frame = tk.Frame(self.main_content_area)
-        self.bottom_controls_frame.pack(side=tk.BOTTOM, fill=tk.X)
-
-# A questo punto, sei ancora all'interno del button_frame.
-# Ora crea e impacchetta lo slider nello stesso button_frame, subito dopo il pulsante.
-        self.warp_slider = tk.Scale(
-             button_frame,  # Il genitore dello slider è lo stesso frame del pulsante
-             from_=10,
-             to=200,
-             resolution=1,
-             orient=tk.HORIZONTAL,
-             length=180,
-             label="Raggio Warp",
-             command=self.update_warp_radius,
-             variable=self.warp_radius,
-             font=("Helvetica", 8)
-)
+    
+        self.warp_slider = tk.Scale(self.sidebar_frame, from_=10, to=200, orient=tk.HORIZONTAL, label="Raggio Warp", 
+                                    command=self.update_warp_radius, variable=self.warp_radius, font=("Helvetica", 8), bg="#2e2e2e", fg="white")
         self.warp_slider.set(50)
-        self.warp_slider.pack(pady=2, fill=tk.X) # Usa pady=5 per dare un po' di spazio
-
-
-
-        self.toggle_camera_button = tk.Button(button_frame, text="ATTIVA/DISATTIVA FOTOCAMERA", command=self.toggle_camera)
+        self.warp_slider.pack(pady=2, fill=tk.X)
+    
+        # Gruppo FOTOCAMERA
+        self.toggle_camera_button = tk.Button(self.sidebar_frame, text="FOTOCAMERA ON/OFF", command=self.toggle_camera)
         self.toggle_camera_button.pack(pady=5, fill=tk.X)
-
-        self.take_photo_button = tk.Button(button_frame, text="SCATTA FOTO", command=self.take_photo, state=tk.DISABLED)
+        self.take_photo_button = tk.Button(self.sidebar_frame, text="SCATTA FOTO", command=self.take_photo, state=tk.DISABLED)
         self.take_photo_button.pack(pady=5, fill=tk.X)
-
-        self.open_button = tk.Button(button_frame, text="APRI", command=self.open_image)
-        
-        self.open_close_frame = tk.Frame(button_frame)
-
-        self.open_close_frame.pack(pady=5)
-        
-        # Ora, crea e impacchetta i bottoni all'interno di questo nuovo frame
-        # Usa 'side=tk.LEFT' per posizionarli uno accanto all'altro
-        self.open_button = tk.Button(self.open_close_frame, text="APRI", command=self.open_image)
-        self.open_button.pack(side=tk.LEFT, padx=5)
-        
-        self.close_button = tk.Button(self.open_close_frame, text="CHIUDI", command=self.close_image)
-        self.close_button.pack(side=tk.LEFT, padx=5)
-              
-        self.open_button.pack(pady=5, fill=tk.X)
-
-        
-        
-        # --- INIZIO NUOVO PULSANTE "RIPRISTINA ORIGINALE" ---
-        tk.Frame(button_frame, height=1, bg="grey").pack(fill=tk.X, pady=10)
-
-        # Caricamento dell'icona
-        # Assicurati che 'restore_icon.png' sia nella stessa directory del tuo script,
-        # oppure specifica il percorso completo.
+    
+        # Gruppo FILE (Apri/Chiudi vicini)
+        file_frame = tk.Frame(self.sidebar_frame, bg="#2e2e2e")
+        file_frame.pack(pady=5, fill=tk.X)
+        tk.Button(file_frame, text="APRI", command=self.open_image).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(file_frame, text="CHIUDI", command=self.close_image).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+    
+        # Gruppo RIPRISTINA
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            # Percorso modificato dall'utente per l'icona UNDO (restore_icon.png)
             icon_path = "/Users/macbook_vincenzo/Python/photo_tool_env/restore_icon.png" 
-            self.restore_icon = Image.open(icon_path)
-            self.restore_icon = self.restore_icon.resize((24, 24), Image.LANCZOS) # Ridisiziona l'icona
+            self.restore_icon = Image.open(icon_path).resize((20, 20), Image.LANCZOS)
             self.restore_tk_icon = ImageTk.PhotoImage(self.restore_icon)
-            
-            self.restore_button = tk.Button(button_frame, image=self.restore_tk_icon, text=" Ripristina Originale", compound=tk.LEFT, command=self.restore_original_image)
-        except FileNotFoundError:
-            print(f"Avviso: file icona '{icon_path}' non trovato. Il pulsante 'Ripristina Originale' sarà solo testo.")
-            self.restore_button = tk.Button(button_frame, text="Ripristina Originale", command=self.restore_original_image)
-        except Exception as e:
-            print(f"Errore caricamento icona: {e}. Il pulsante 'Ripristina Originale' sarà solo testo.")
-            self.restore_button = tk.Button(button_frame, text="Ripristina Originale", command=self.restore_original_image)
-            
+            self.restore_button = tk.Button(self.sidebar_frame, image=self.restore_tk_icon, text=" Ripristina", compound=tk.LEFT, command=self.restore_original_image)
+        except:
+            self.restore_button = tk.Button(self.sidebar_frame, text="Ripristina Originale", command=self.restore_original_image)
         self.restore_button.pack(pady=5, fill=tk.X)
-        # --- FINE NUOVO PULSANTE "RIPRISTINA ORIGINALE" ---
-
-
-        tk.Frame(button_frame, height=1, bg="grey").pack(fill=tk.X, pady=10)
-
-        self.zoom_in_button = tk.Button(button_frame, text="ZOOM +", command=self.zoom_in)
-        self.zoom_in_button.pack(pady=5, fill=tk.X)
-
-        self.zoom_out_button = tk.Button(button_frame, text="ZOOM -", command=self.zoom_out)
-        self.zoom_out_button.pack(pady=5, fill=tk.X)
+    
+        # Gruppo ZOOM
+        zoom_frame = tk.Frame(self.sidebar_frame, bg="#2e2e2e")
+        zoom_frame.pack(pady=5, fill=tk.X)
+        tk.Button(zoom_frame, text="Z+", command=self.zoom_in).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(zoom_frame, text="Z-", command=self.zoom_out).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(self.sidebar_frame, text="RESET ZOOM", command=self.reset_zoom).pack(pady=2, fill=tk.X)
         
-        self.reset_zoom_button = tk.Button(button_frame, text="RESET ZOOM", command=self.reset_zoom)
-        self.reset_zoom_button.pack(pady=5, fill=tk.X)
         
-        tk.Frame(button_frame, height=1, bg="grey").pack(fill=tk.X, pady=10)
+        ## bottone Ruota a destra 
+    
+        ##
+        tk.Button(zoom_frame, text="Ruota ->", command=self.rotate_right).pack(fill=tk.X, pady=3)
+        # bottone ruota a sinistra
+        tk.Button(zoom_frame, text="Ruota <- ", command=self.rotate_left).pack(fill=tk.X, pady=3)
 
-        self.blur_plus_button = tk.Button(button_frame, text="BLUR +", command=self.blur_plus)
-        self.blur_plus_button.pack(pady=5, fill=tk.X)
-
-        self.blur_minus_button = tk.Button(button_frame, text="BLUR -", command=self.blur_minus)
-        self.blur_minus_button.pack(pady=5, fill=tk.X)
-
-        tk.Frame(button_frame, height=1, bg="grey").pack(fill=tk.X, pady=10)
-
-        self.rotate_right_button = tk.Button(button_frame, text="RotateDX", command=self.rotate_right)
-        self.rotate_right_button.pack(pady=5, fill=tk.X)
-
-        self.rotate_left_button = tk.Button(button_frame, text="Rotatesx", command=self.rotate_left)
-        self.rotate_left_button.pack(pady=5, fill=tk.X)
-
-        tk.Frame(button_frame, height=1, bg="grey").pack(fill=tk.X, pady=10)
-
-        alpha_button_frame = tk.Frame(button_frame)
-        alpha_button_frame.pack(pady=5, fill=tk.X)
         
-        self.alpha_plus_button = tk.Button(alpha_button_frame, text="ALPHA +", command=self.alpha_plus)
-        self.alpha_plus_button.pack(side=tk.LEFT, expand=True, fill=tk.X)
-
-        self.alpha_minus_button = tk.Button(alpha_button_frame, text="ALPHA -", command=self.alpha_minus)
-        self.alpha_minus_button.pack(side=tk.LEFT, expand=True, fill=tk.X)
         
-        self.removeBG_button = tk.Button(button_frame, text="Rimuovi sfondo", command=self.remove_ai_background)
-        self.removeBG_button.pack(pady=5, fill=tk.X)
+        # Gruppo EFFETTI (Blur, Alpha, BG)
+        tk.Button(self.sidebar_frame, text="Sfoca Volti/Targhe", command=self.apply_privacy_blur).pack(pady=5, fill=tk.X)
+        tk.Button(self.sidebar_frame, text="Rimuovi Sfondo AI", command=self.remove_ai_background).pack(pady=5, fill=tk.X)
         
-        grayscale_frame = tk.Frame(button_frame, bd=1, relief=tk.RIDGE)
-        grayscale_frame.pack(pady=10, padx=5, fill=tk.X)
-
-        tk.Label(grayscale_frame, text="Modalità Colore:").pack(anchor=tk.W, padx=5, pady=2)
-
-        self.color_radio = tk.Radiobutton(grayscale_frame, text="Immagine a colori", 
-                                          variable=self.is_grayscale_active, value=False, 
-                                          command=self.on_grayscale_selection)
-        self.color_radio.pack(anchor=tk.W, padx=10)
-
-        self.bw_radio = tk.Radiobutton(grayscale_frame, text="Immagine in bianco e nero", 
-                                       variable=self.is_grayscale_active, value=True, 
-                                       command=self.on_grayscale_selection)
-        self.bw_radio.pack(anchor=tk.W, padx=10)
+        # Gruppo CARTOON
+        self.cartoonize_slider = tk.Scale(self.sidebar_frame, from_=0, to=100, orient=tk.HORIZONTAL, label="Fattore Cartoon",
+                                         command=self.update_cartoonize, variable=self.cartoonize_factor, bg="#2e2e2e", fg="white")
+        self.cartoonize_slider.pack(fill=tk.X)
+    
+        # --- 5. SEZIONE PALETTE (Nuova 12/2025) ---
+        tk.Frame(self.sidebar_frame, height=1, bg="grey").pack(fill=tk.X, pady=10) # Separatore
         
-        # Aggiungi un pulsante per attivare la funzione
-
-        # Aggiungi una variabile di controllo per lo slider
-        self.cartoonize_factor = tk.DoubleVar()
-        self.cartoonize_factor.set(0) # Inizializza a 0 per mostrare l'immagine originale
-        
-        # Crea e impacchetta lo slider
-        self.cartoonize_slider = tk.Scale(
-            alpha_button_frame,
-            from_=0,
-            to=100,
-            resolution=1,
-            orient=tk.HORIZONTAL,
-            length=200,
-            label="Fattore Cartoon",
-            command=self.update_cartoonize, # La funzione che si attiva muovendo lo slider
-            variable=self.cartoonize_factor
+        self.show_palette_var = tk.BooleanVar(value=False)
+        self.palette_check = tk.Checkbutton(
+            self.sidebar_frame, 
+            text="🎨 Visualizza Palette", 
+            variable=self.show_palette_var,
+            command=self.toggle_palette_view,
+            bg="#2e2e2e", fg="white", selectcolor="#444", activebackground="#2e2e2e"
         )
-        self.cartoonize_slider.pack()
+        self.palette_check.pack(pady=5, anchor="w")
+    
+        # Frame per i quadratini della palette
+        self.palette_container = tk.Frame(self.sidebar_frame, bg="#2e2e2e")
+        # Viene mostrato/nascosto da toggle_palette_view
         
+                # Sotto il gruppo Effetti nella sidebar
+        self.motion_btn = tk.Button(
+            self.sidebar_frame, 
+            text="💫 Effetto Mosso (Ghost)", 
+            command=self.apply_motion_effect,
+            bg="#2e2e2e", fg="orange"
+        )
+        self.motion_btn.pack(pady=5, fill=tk.X)
         
-        self.crea_puntini_button = tk.Button(alpha_button_frame, text="Crea punti da unire", command=self.apply_dot_to_dot_Gpu)
-        self.crea_puntini_button.pack(side=tk.LEFT,pady=3)
+            # --- 17/01/2026 PULSANTE FILTRO BELLEZZA (Per la cugina) ---
+        self.beauty_btn = tk.Button(
+            self.sidebar_frame, 
+            text="✨ FILTRO RED CARPET", 
+            command=self.apply_beauty_filter,
+            bg="#ffc0cb", fg="black", font=("Helvetica", 10, "bold") # Un tocco di rosa per distinguerlo
+        )
+        self.beauty_btn.pack(pady=10, fill=tk.X)
         
+        self.youth_btn = tk.Button(
+            self.sidebar_frame, 
+            text="✨ FILTRO GIOVINEZZA", 
+            command=self.apply_eternal_youth,
+            bg="#dfc3cd", fg="black", font=("Helvetica", 10, "bold") # Un tocco di ... per distinguerlo
+        )
+        self.beauty_btn.pack(pady=10, fill=tk.X)
         
-        self.blur_Face_plates_button = tk.Button(alpha_button_frame,text="Sfoca Volti/Targhe",command=self.apply_privacy_blur
-            )
-        self.blur_Face_plates_button.pack(fill=tk.X)
-        
-        
-        tk.Label(grayscale_frame, text="Modalità Colore:").pack(anchor=tk.W, padx=5, pady=2)
-        
-     
+        self.youth_btn.pack(pady=12, fill=tk.X)
+         
     def update_warp_radius(self,val):
 
         # 'val' è il valore numerico (str o int) passato automaticamente da Tkinter
@@ -310,9 +315,13 @@ class PhotoEditorApp:
         
         if not file_path:
     # Se nessun percorso è stato passato, apri la finestra di dialogo
-            file_path = filedialog.askopenfilename(
-            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.gif *.bmp *.webp"), ("All Files", "*.*")]
-        )
+           # filetypes=[("Image Files", "*.png *.jpg *.jpeg *.gif *.bmp *.webp"), ("All Files", "*.*")]
+            filetypes = [("Tutti i File Immagine", "*.jpg *.jpeg *.png *.webp *.svg"),
+                            ("Vettoriale", "*.svg","*.ai"),
+                            ("Raster (JPG, PNG, ecc.)", "*.jpg *.jpeg *.png *.webp"),
+                            ("Tutti i file", "*.*")]
+            file_path = filedialog.askopenfilename(filetypes=filetypes)
+        
         if file_path:
             
             try:
@@ -342,6 +351,44 @@ class PhotoEditorApp:
             self.display_image()
             self.update_status_bar()
             self.hide_canvas_message()
+            #GESTIONE Formato SVG
+            if file_path:
+                # Ottieni l'estensione del file in minuscolo
+                ext = file_path.lower().split('.')[-1]
+        
+                if ext == 'svg':
+                    try:
+                        # *** INIZIO LOGICA SVG ***
+                        
+                        # Rasterizza il file SVG in un formato PNG binario in memoria
+                        svg_data = open(file_path, 'rb').read()
+                        png_output = BytesIO()
+                        
+                        # Usa cairosvg per la conversione
+                        # Riduci l'output se necessario, o usa un'altra logica per la dimensione
+                        cairosvg.svg2png(bytestring=svg_data, write_to=png_output, scale=3.0) 
+                        
+                        # Pillow può leggere i dati PNG binari da BytesIO
+                        img = Image.open(png_output)
+                        
+                        # *** FINE LOGICA SVG ***
+        
+                    except Exception as e:
+                        self.update_status_bar(f"Errore nella rasterizzazione SVG: {e}")
+                        print(f"Errore nella rasterizzazione SVG: {e}")
+                      
+                        return
+        
+                else:
+                        # Logica esistente per tutti gli altri formati raster (JPG, PNG, WEBP, ecc.)
+                        try:
+                            img = Image.open(file_path)
+                        except Exception as e:
+                            self.update_status_bar(f"Errore nell'apertura del file raster: {e}")
+                            print(f"Errore nell'apertura del file raster: {e}")
+                            
+                            return
+            
         except Exception as e:
             messagebox.showerror("Errore Caricamento Immagine", f"Non è stato possibile caricare l'immagine: {e}")
             self.image = None
@@ -353,6 +400,52 @@ class PhotoEditorApp:
             self.display_image()
             self.update_status_bar()
             self.show_canvas_message("Errore nel caricamento. Riprova.")
+            
+    def resize_image(self, event):
+        # Ignora l'evento se non c'è un'immagine caricata
+        if self.original_image_full is None:
+            return
+    
+        # Evita il ricalcolo se l'evento è solo un cambio di posizione (non di dimensione)
+        if event.widget == self.master and event.width == self.last_width and event.height == self.last_height:
+            return
+        
+        # Aggiorna le ultime dimensioni
+        self.last_width = event.width
+        self.last_height = event.height
+        
+        # 1. Calcola le dimensioni disponibili per il canvas
+        # Assumiamo che il canvas occupi tutto lo spazio rimanente
+        # Togli l'area occupata dai controlli laterali (self.controls_width)
+        new_canvas_width = event.width - self.controls_width 
+        new_canvas_height = event.height - self.status_bar_height # Togli la barra di stato
+        
+        if new_canvas_width <= 0 or new_canvas_height <= 0:
+            return
+    
+        # 2. Ottieni l'aspect ratio dell'immagine originale
+        original_width, original_height = self.original_image_full.size
+        aspect_ratio = original_width / original_height
+    
+        # 3. Calcola il nuovo ridimensionamento mantenendo l'aspect ratio
+        # Opzione A: Adatta alla larghezza disponibile
+        width_fit = int(new_canvas_width)
+        height_fit = int(new_canvas_width / aspect_ratio)
+    
+        # Opzione B: Adatta all'altezza disponibile
+        if height_fit > new_canvas_height:
+            height_fit = int(new_canvas_height)
+            width_fit = int(new_canvas_height * aspect_ratio)
+    
+        # 4. Ridimensiona l'immagine (solo se le dimensioni sono positive)
+        if width_fit > 0 and height_fit > 0:
+            self.image = self.original_image_full.resize((width_fit, height_fit), Image.LANCZOS)
+            
+            # Aggiorna le dimensioni del canvas per adattarsi all'immagine
+            self.canvas.config(width=width_fit, height=height_fit)
+            
+            # Ridisegna l'immagine sul canvas
+            self.display_image()
     
     def show_canvas_message(self, message):
         if self.canvas_message_id:
@@ -621,12 +714,15 @@ class PhotoEditorApp:
             _, file_extension = os.path.splitext(self.current_image_path) if self.current_image_path else ("", "")
             self.status_bar.config(text=f"Immagine: {os.path.basename(self.current_image_path) if self.current_image_path else 'N/A'} "
                                          f"({self.image.width}x{self.image.height}px) | "
+                                         f"dimensione in KB: ({self.image.size}| "
                                          f"Zoom: {self.zoom_level:.2f}x | Blur: {self.blur_radius} | "
                                          f"Alpha: {self.alpha_level:.1f} | "
                                          f"Warp: {'ON' if self.warp_active else 'OFF'} | "
                                          f"Colore: {grayscale_status}"
                                          f"{gpu_status}") 
+        
         elif self.camera_active:
+            
              self.status_bar.config(text="Fotocamera attiva..." + gpu_status)
         else:
             self.status_bar.config(text="Nessuna immagine caricata." + gpu_status)
@@ -1161,47 +1257,71 @@ class PhotoEditorApp:
         pass
     
     def update_cartoonize(self, new_value):
-        # 'new_value' è il valore dello slider, da 0 a 100
-        
-        # Per sicurezza, converti il valore in un float
-        try:
-            new_value = float(new_value)
-        except (ValueError, TypeError):
+        if self.original_image_full is None:
             return
     
-        # Se il valore è 0, mostra l'immagine originale
-        if new_value == 0:
-            # Usa il nome corretto della variabile: self.original_image_full
+        val = float(new_value)
+        if val == 0:
             self.image = self.original_image_full.copy()
-            self.display_image()
+            self.show_image()
             return
-    
-        # Converte il valore dello slider in un fattore di controllo
-        strength = int(new_value / 10) + 1 
         
-        # Converti l'immagine da PIL a un array NumPy in formato OpenCV (BGR)
-        # Usa il nome corretto della variabile qui
+        # Livelli discreti (1, 2, 3)
+        level = int(val / 33) + 1
+        
+        # Converti in BGR
         img_bgr = cv2.cvtColor(np.array(self.original_image_full.convert("RGB")), cv2.COLOR_RGB2BGR)
     
-        # Passo 1: Edge-Aware Smoothing (Filtro Bilaterale)
-        img_smoothed = cv2.bilateralFilter(img_bgr, d=9, sigmaColor=strength * 10, sigmaSpace=strength * 10)
+        # --- 1. PRE-PROCESSING: KILL GRANULARITY ---
+        # Usiamo un Median Blur potente per rimuovere ogni grana
+        # Il kernel deve essere dispari e aumenta col livello
+        k_size = 7 + (level * 2) 
+        smoothed = cv2.medianBlur(img_bgr, k_size)
+    
+        # --- 2. SCHIARIMENTO E TONI ANNI '80 (HSV space) ---
+        hsv = cv2.cvtColor(smoothed, cv2.COLOR_BGR2HSV).astype("float32")
+        # Aumentiamo la Saturazione (S) e il Valore/Luminosità (V)
+        hsv[:, :, 1] *= 1.4  # Colori più "vivi" alla Sampei
+        hsv[:, :, 2] *= 1.2  # Schiarisce l'immagine senza "bruciarla"
+        hsv = np.clip(hsv, 0, 255).astype("uint8")
+        img_bright = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    
+        # --- 3. QUANTIZZAZIONE COLORE (K-Means per Tinte Piatte) ---
+        # Per Lady Oscar vogliamo pochissimi colori (3 o 4 al massimo per area)
+        k_colors = 7 - level 
+        data = img_bright.reshape((-1, 3)).astype(np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+        _, label, center = cv2.kmeans(data, k_colors, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
         
-        # Passo 2: Rilevamento Bordi
-        img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        center = np.uint8(center)
+        res = center[label.flatten()]
+        img_flat = res.reshape((img_bright.shape))
+    
+        # --- 4. MORFOLOGIA (Unifica le "Hatch") ---
+        # Elimina i rimasugli di pixel isolati fondendoli nella massa cromatica
+        kernel_morph = np.ones((5, 5), np.uint8)
+        img_flat = cv2.morphologyEx(img_flat, cv2.MORPH_OPEN, kernel_morph)
+    
+        # --- 5. BORDI SOTTILI (Inchiostrazione) ---
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         edges = cv2.adaptiveThreshold(
-            img_gray, 255, 
-            cv2.ADAPTIVE_THRESH_MEAN_C, 
-            cv2.THRESH_BINARY, 
-            blockSize=9, C=2
+            cv2.medianBlur(gray, 5), 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 11, 2
         )
         
-        # Passo 3: Combinazione
-        img_cartoonized = cv2.bitwise_and(img_smoothed, img_smoothed, mask=edges)
+        # Rendiamo i bordi un po' meno pesanti per l'effetto 2D
+        edges = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
         
-        # Converte l'immagine risultante in PIL e la visualizza
-        self.image = Image.fromarray(cv2.cvtColor(img_cartoonized, cv2.COLOR_BGR2RGB))
-        self.display_image()
-        
+        # --- 6. COMBINAZIONE FINALE ---
+        # Applichiamo i bordi neri sulle tinte piatte schiarite
+        img_final = cv2.bitwise_and(img_flat, edges)
+    
+        # Ritorno a PIL
+        self.image = Image.fromarray(cv2.cvtColor(img_final, cv2.COLOR_BGR2RGB))
+        self.show_image()
+           
+            
     
     def remove_ai_background(self):
         if self.image is None:
@@ -1251,7 +1371,9 @@ class PhotoEditorApp:
             return
     
         # Invia un messaggio immediato sulla barra di stato
+        self.crea_puntini_button.config(state=tk.DISABLED)
         self.update_status_bar("Elaborazione in corso... (GPU)")
+        
         self.master.update_idletasks()
     
         # Avvia la logica di calcolo in un thread separato
@@ -1269,6 +1391,7 @@ class PhotoEditorApp:
                 self.master.after(0, lambda: self.update_status_bar("Utilizzo GPU: NO (CPU)"))
     
             # Conversione da PIL a Tensore PyTorch
+             
             img_pil = self.original_image_full.convert("RGB")
             img_np = np.array(img_pil).astype(np.float32) / 255.0
             # Aggiunge una dimensione batch e converte in C x H x W
@@ -1300,7 +1423,7 @@ class PhotoEditorApp:
     
             # 4. Semplice soglia per trovare i punti dei bordi (al posto di Canny)
             # La soglia può essere regolata a seconda dell'immagine
-            threshold = 0.15
+            threshold = 0.20
             edges_tensor = (edge_magnitude > threshold).squeeze().cpu().detach().numpy()
             
             # 5. Estrazione dei punti sulla CPU
@@ -1312,7 +1435,7 @@ class PhotoEditorApp:
     
             # 6. Campionamento dei punti
             np.random.shuffle(edge_points)
-            min_distance_sq = 40**2 
+            min_distance_sq = 60**2 
             sampled_points = []
             if len(edge_points) > 0:
                 sampled_points.append(edge_points[0])
@@ -1337,6 +1460,9 @@ class PhotoEditorApp:
             
             self.final_image = final_image
             self.master.after(0, self._finish_dot_to_dot)
+           
+            
+
         
         except Exception as e:
             self.master.after(0, lambda: self.update_status_bar(f"Errore:"))
@@ -1349,6 +1475,9 @@ class PhotoEditorApp:
         self.image = self.final_image
         self.display_image()
         self.update_status_bar(f"Gioco 'Unisci i Puntini' generato con successo!")
+        self.crea_puntini_button.config(state=tk.NORMAL) # Assicurati di usare tk.NORMAL, non tk.ENABLED(da errore)
+
+        
         
         # NON FUNZIONA  per gestire il Drag&Drop
     def handle_drop(self, event):
@@ -1396,9 +1525,9 @@ class PhotoEditorApp:
     
             # Esegui il rilevamento dei volti. I parametri possono essere ottimizzati.
             # `scaleFactor` e `minNeighbors` controllano la precisione del rilevamento.
-            faces = face_cascade.detectMultiScale(img_gray, scaleFactor=1.02, minNeighbors=3)
+            faces = face_cascade.detectMultiScale(img_gray, scaleFactor=1.02, minNeighbors=3,minSize=(30, 30),maxSize=(2500,2500))
             # Esegui il rilevamento delle targhe, se hai il classificatore
-            # plates = plate_cascade.detectMultiScale(img_gray, ...)
+            plates = plate_cascade.detectMultiScale(img_gray, scaleFactor=1.02, minNeighbors=3)
     
             # Per ogni volto rilevato, applica la sfocatura
             for (x, y, w, h) in faces:
@@ -1408,6 +1537,19 @@ class PhotoEditorApp:
                 blurred_face = cv2.GaussianBlur(face_region, (99, 99), 0)
                 # Sostituisci la regione originale con quella sfocata
                 img_bgr[y:y+h, x:x+w] = blurred_face
+            
+            # Per ogni TARGA di motoveicoli rilevata, applica la sfocatura
+            for (x, y, w, h) in plates:
+                # Estrai la regione della targa dall'immagine originale
+                plate_region = img_bgr[y:y+h, x:x+w]
+                # Applica una sfocatura gaussiana a quella regione
+                blurred_plates = cv2.GaussianBlur(plate_region, (99, 99), 0)
+                # Sostituisci la regione originale con quella sfocata
+                img_bgr[y:y+h, x:x+w] = blurred_plates
+                self.update_status_bar("...APPLICAZIONE delle sfocature in corso...attendere prego")
+            
+            
+
     
             # Converti l'immagine BGR di nuovo in RGB per PIL
             final_img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -1422,8 +1564,259 @@ class PhotoEditorApp:
             self.update_status_bar(f"Errore nell'applicazione della sfocatura: {e}")
             import traceback
             traceback.print_exc()
+            
+    #19/12/25 STEP 2: La Funzione di Estrazione. Dobbiamo estrarre i colori dall'immagine attualmente caricata.
+    def extract_colors(self, num_colors=64):
+         if self.image is None:
+            return []
+        
+        # Convertiamo in palette adattiva
+         paletted_img = self.image.convert("P", palette=Image.ADAPTIVE, colors=num_colors)
+        
+        # Otteniamo i dati della palette (lista di 768 valori: 256 colori * 3 RGB)
+         raw_palette = paletted_img.getpalette()
+        
+        # Estraiamo solo i primi N colori (R, G, B)
+         colors = []
+         for i in range(0, num_colors * 3, 3):
+              colors.append((raw_palette[i], raw_palette[i+1], raw_palette[i+2]))
+         return colors   
                 
-
+#19/12/25 STEP 3: visualizzazione TOggle(olivetta): quadratini dei colori, matrice rxn
+    
+    def toggle_palette_view(self):
+        if self.show_palette_var.get():
+            # Puliamo il container precedente
+            for widget in self.palette_container.winfo_children():
+                widget.destroy()
+                
+            colors = self.extract_colors(num_colors=16) # Estraiamo 16 colori
+            
+            # Creiamo una griglia 8x8
+            for i, color in enumerate(colors):
+                # Convertiamo RGB in esadecimale per Tkinter
+                hex_color = '#%02x%02x%02x' % color
+                
+                lbl = tk.Label(self.palette_container, bg=hex_color, width=2, height=1, relief="sunken")
+                lbl.grid(row=i // 8, column=i % 8, padx=2, pady=2)
+                
+            self.palette_container.pack(pady=5, fill=tk.X)
+        else:
+            self.palette_container.pack_forget()
+            
+    def apply_motion_effect(self):
+        if self.image is None:
+            return
+    
+        # 1. Creiamo una copia per il "Ghost"
+        ghost = self.image.copy()
+        
+        # 2. Applichiamo una sfocatura direzionale o leggera al ghost
+        # Pillow non ha un MotionBlur nativo avanzato, quindi usiamo un trucco:
+        # Sfocatura + Traslazione
+        ghost = ghost.filter(ImageFilter.GaussianBlur(radius=2))
+        
+        # 3. Trasliamo il ghost di 15 pixel a destra e 5 in basso
+        # Questo crea l'illusione del movimento della camera
+        ghost = ImageChops.offset(ghost, 15, 5)
+        
+        # 4. Fondiamo l'originale con il ghost (opacità 50%)
+        self.image = Image.blend(self.image, ghost, alpha=0.5)
+        
+        self.show_image()
+        self.update_status_bar("Effetto mosso applicato.")  
+    
+        
+        
+    def show_image(self):
+        """Aggiorna il Canvas con l'immagine corrente (self.image)"""
+        if self.image is None:
+            return
+    
+        # 1. Convertiamo l'oggetto Image di Pillow in un formato che Tkinter capisce
+        self.tk_image = ImageTk.PhotoImage(self.image)
+    
+        # 2. Aggiorniamo il canvas
+        # 'self.image_label' è l'ID dell'immagine creata nel canvas durante create_widgets
+        self.canvas.itemconfig(self.image_label, image=self.tk_image)
+    
+        # 3. Opzionale: diciamo al canvas quanto è grande la nuova immagine 
+        # (utile se l'effetto cambia le dimensioni)
+        self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))
+        
+        #17/01/2026
+        
+    def apply_beauty_filter(self):
+        if self.image is None:
+            return
+    
+        # --- INIZIO: CARICAMENTO IN GPU (OpenCL) ---
+        # Convertiamo l'immagine in un formato che OpenCV può processare sulla GPU se disponibile
+        img_cpu = cv2.cvtColor(np.array(self.image.convert("RGB")), cv2.COLOR_RGB2BGR)
+        img_gpu = cv2.UMat(img_cpu) # Sposta l'immagine nella memoria della GPU/OpenCL
+    
+        # --- FASE 1: FILTRO BILATERALE ---
+        self.status_bar.config(text="✨ FASE 1: Attivazione Filtro Bilaterale (Pelle)...", fg="blue")
+        self.master.update_idletasks() # Forza Tkinter ad aggiornare il testo subito
+        
+        # Esecuzione sulla GPU
+        # Il filtro bilaterale è pesante, qui la GPU aiuta molto
+        smoothed_gpu = cv2.bilateralFilter(img_gpu, d=15, sigmaColor=75, sigmaSpace=75)
+    
+        # --- FASE 2: LEVIGATURA E LUCE ---
+        self.status_bar.config(text="✨ FASE 2: Levigatura profonda e ottimizzazione luce...", fg="purple")
+        self.master.update_idletasks()
+    
+        # Passaggio a HSV per la luminosità
+        hsv_gpu = cv2.cvtColor(smoothed_gpu, cv2.COLOR_BGR2HSV)
+        
+        # Nota: Le operazioni dirette sulle matrici UMat (GPU) sono più veloci
+        # Dividiamo i canali, modifichiamo e riuniamo
+        h, s, v = cv2.split(hsv_gpu)
+        
+        # Usiamo cv2.multiply per restare in GPU invece di operazioni numpy lente
+        s = cv2.multiply(s, 1.2) # Aumenta saturazione
+        v = cv2.multiply(v, 1.15) # Aumenta luminosità
+        
+        hsv_gpu = cv2.merge([h, s, v])
+        img_bright_gpu = cv2.cvtColor(hsv_gpu, cv2.COLOR_HSV2BGR)
+    
+        # --- FASE 3: DETTAGLI E NITIDEZZA ---
+        self.status_bar.config(text="✨ FASE 3: Definizione sguardo e contrasto finale...", fg="darkgreen")
+        self.master.update_idletasks()
+    
+        # Unsharp Mask per ridare nitidezza agli occhi dopo la levigatura
+        gaussian_gpu = cv2.GaussianBlur(img_bright_gpu, (0, 0), 3)
+        # img_final = img_bright * 1.5 - gaussian * 0.5
+        img_final_gpu = cv2.addWeighted(img_bright_gpu, 1.5, gaussian_gpu, -0.5, 0)
+    
+        # --- FINE: RITORNO DALLA GPU AL PROGRAMMA ---
+        # Riportiamo il risultato dalla GPU alla CPU per poterlo mostrare in PIL
+        img_final_cpu = img_final_gpu.get() 
+        
+        self.image = Image.fromarray(cv2.cvtColor(img_final_cpu, cv2.COLOR_BGR2RGB))
+        
+        self.show_image()
+        self.status_bar.config(text="✅ Filtro Red Carpet applicato con successo (GPU Accelerated)", fg="black")
+        self.update_status_bar("Pronto.")
+        
+    def apply_eternal_youth(self):
+        if self.image is None:
+            return
+    
+        # --- FASE 0: PREPARAZIONE ---
+        img_cpu = cv2.cvtColor(np.array(self.image.convert("RGB")), cv2.COLOR_RGB2BGR)
+        img_gpu = cv2.UMat(img_cpu)
+    
+        # --- FASE 1: MASCHERA PELLE ---
+        self.status_bar.config(text="🔍 FASE 1: Analisi della pelle (viso, collo, spalle)...", fg="blue")
+        self.master.update_idletasks()
+    
+        img_ycrcb = cv2.cvtColor(img_gpu, cv2.COLOR_BGR2YCrCb)
+        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
+        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
+        mask_gpu = cv2.inRange(img_ycrcb, lower_skin, upper_skin)
+        
+        # Pulizia e sfocatura della maschera per transizioni morbide
+        mask_gpu = cv2.GaussianBlur(mask_gpu, (25, 25), 0)
+    
+        # --- FASE 2: LEVIGATURA ---
+        self.status_bar.config(text="💆 FASE 2: Eliminazione rughe e segni del tempo...", fg="purple")
+        self.master.update_idletasks()
+        
+        # Filtro bilaterale potente (il nostro chirurgo estetico)
+        skin_smooth_gpu = cv2.bilateralFilter(img_gpu, d=15, sigmaColor=75, sigmaSpace=75)
+    
+        # --- FASE 3: ARMONIZZAZIONE (FUSIONE SICURA) ---
+        self.status_bar.config(text="🎨 FASE 3: Armonizzazione corpo e viso...", fg="darkgreen")
+        self.master.update_idletasks()
+    
+        # Invece di moltiplicazioni complesse che mandano in crash la GPU,
+        # usiamo la maschera per incollare la pelle liscia sull'originale.
+        # Convertiamo la maschera in float 0-1
+        mask_float = cv2.divide(cv2.UMat(mask_gpu.get().astype(np.float32)), 255.0)
+        
+        # Portiamo tutto in float32 per fare il calcolo matematico preciso
+        img_f = cv2.UMat(img_gpu.get().astype(np.float32))
+        smooth_f = cv2.UMat(skin_smooth_gpu.get().astype(np.float32))
+        
+        # Formula di blending: Risultato = (Liscio * Maschera) + (Originale * (1 - Maschera))
+        # Questo assicura che solo la pelle venga ritoccata
+        temp1 = cv2.multiply(smooth_f, cv2.cvtColor(mask_float, cv2.COLOR_GRAY2BGR))
+        
+        # Calcoliamo l'inverso della maschera (1 - maschera)
+        inv_mask = cv2.subtract(1.0, cv2.cvtColor(mask_float, cv2.COLOR_GRAY2BGR))
+        temp2 = cv2.multiply(img_f, inv_mask)
+        
+        # Sommiamo i due risultati
+        img_final_f = cv2.add(temp1, temp2)
+        
+        # Torniamo al formato standard a 8 bit (0-255)
+        img_final_gpu = cv2.convertScaleAbs(img_final_f)
+    
+        # --- FASE 4: RITORNO ---
+        img_final_cpu = img_final_gpu.get()
+        self.image = Image.fromarray(cv2.cvtColor(img_final_cpu, cv2.COLOR_BGR2RGB))
+        
+        self.show_image()
+        self.status_bar.config(text="✅ Effetto Eterna Giovinezza applicato correttamente.", fg="black")
+        if self.image is None:
+            return
+    
+        # --- FASE 0: CARICAMENTO GPU ---
+        img_cpu = cv2.cvtColor(np.array(self.image.convert("RGB")), cv2.COLOR_RGB2BGR)
+        img_gpu = cv2.UMat(img_cpu)
+    
+        # --- FASE 1: CREAZIONE MASCHERA PELLE ---
+        self.status_bar.config(text="🔍 FASE 1: Analisi della pelle (viso, collo, spalle)...", fg="blue")
+        self.master.update_idletasks()
+    
+        # Convertiamo in YCrCb per isolare la pelle
+        img_ycrcb = cv2.cvtColor(img_gpu, cv2.COLOR_BGR2YCrCb)
+        # Range standard per la pelle umana
+        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
+        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
+        mask_gpu = cv2.inRange(img_ycrcb, lower_skin, upper_skin)
+        
+        # Puliamo la maschera (rimuove i puntini isolati)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask_gpu = cv2.morphologyEx(mask_gpu, cv2.MORPH_OPEN, kernel)
+        mask_gpu = cv2.GaussianBlur(mask_gpu, (15, 15), 0) # Sfuma i bordi della maschera per non far vedere lo stacco
+    
+        # --- FASE 2: ELIMINAZIONE RUGHE (Smoothing Avanzato) ---
+        self.status_bar.config(text="💆 FASE 2: Eliminazione rughe e segni del tempo...", fg="purple")
+        self.master.update_idletasks()
+    
+        # Usiamo un filtro bilaterale molto potente per la "giovinezza"
+        # d=25 rende la pelle liscissima
+        skin_smooth_gpu = cv2.bilateralFilter(img_gpu, d=25, sigmaColor=90, sigmaSpace=90)
+    
+        # --- FASE 3: ARMONIZZAZIONE E FUSIONE ---
+        self.status_bar.config(text="🎨 FASE 3: Armonizzazione corpo e viso...", fg="darkgreen")
+        self.master.update_idletasks()
+    
+        # Trasformiamo la maschera in 3 canali per poterla moltiplicare
+        mask_3ch = cv2.cvtColor(mask_gpu, cv2.COLOR_GRAY2BGR)
+        mask_3ch = cv2.divide(mask_3ch, 255.0) # Normalizza tra 0 e 1
+    
+        # FONDIAMO: Dove c'è pelle usa 'skin_smooth', dove non c'è usa 'img_gpu' (originale)
+        # Questo mantiene capelli, occhi e vestiti nitidissimi!
+        img_final_gpu = cv2.add(
+            cv2.multiply(skin_smooth_gpu, mask_3ch),
+            cv2.multiply(img_gpu, cv2.subtract(cv2.UMat(np.ones(img_cpu.shape, dtype=np.float32)), mask_3ch), dtype=cv2.CV_8U)
+        )
+    
+        # --- FASE 4: TOCCO DI LUCE ---
+        # Un leggero aumento di contrasto per non far sembrare la foto sbiadita
+        img_final_gpu = cv2.convertScaleAbs(img_final_gpu, alpha=1.05, beta=5)
+    
+        # --- RITORNO ---
+        img_final_cpu = img_final_gpu.get()
+        self.image = Image.fromarray(cv2.cvtColor(img_final_cpu, cv2.COLOR_BGR2RGB))
+        
+        self.show_image()
+        self.status_bar.config(text="✅ Effetto Eterna Giovinezza armonizzato applicato.", fg="black")
+    
 
 if __name__ == "__main__":
    # La finestra principale deve essere un'istanza di tk.Tk()
