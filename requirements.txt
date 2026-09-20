@@ -1,0 +1,4 @@
+Tkinter dovrebbe essere gia presente, è standard
+QSKIT framework fo quantum computing simulation
+Pygame framework for script that requires it
+PIL : Python Image Library : python doesn't open jpeg files, with tkinter, it requires additional libraries like PIL
