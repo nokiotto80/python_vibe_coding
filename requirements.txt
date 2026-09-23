@@ -1,4 +1,6 @@
 Tkinter dovrebbe essere gia presente, è standard
 QSKIT framework fo quantum computing simulation
 Pygame framework for script that requires it
-PIL : Python Image Library : python doesn't open jpeg files, with tkinter, it requires additional libraries like PIL
+PILLOW : Python Image Library : python doesn't open jpeg files, with tkinter, it requires additional libraries like PIL
+OpenCV: Libreria di computer vision, per alcune funzionalità di riconoscimento pattern
+PyAudio, Librosa, Pedalboard: per alcuni progetti musicali, per far suonare il computer, servono delle librerie audio
