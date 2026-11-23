@@ -1,0 +1,11 @@
+# RelativityVisualLab - Python dependencies
+
+# Interactive web applications
+dash>=3.1,<4.0
+plotly>=6.0,<7.0
+
+# Numerical computing
+numpy>=2.0,<3.0
+
+# Web framework
+Flask>=3.0,<4.0
