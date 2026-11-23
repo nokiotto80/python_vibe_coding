@@ -1,0 +1,86 @@
+{
+    "project": "Relativity Visual Lab",
+
+    "version": "0.1 Alpha",
+
+    "author": "Vincenzo Pugliese",
+
+    "python": ">=3.12",
+
+    "simulations":
+
+    [
+
+        {
+            "id":"minkowski",
+
+            "title":"Diagramma di Minkowski",
+
+            "module":"minkowski",
+
+            "icon":"minkowski.png",
+
+            "category":"Relatività Ristretta",
+
+            "difficulty":2,
+
+            "enabled":true
+
+        },
+
+        {
+
+            "id":"tesseract",
+
+            "title":"Tesseract",
+
+            "module":"tesseract",
+
+            "icon":"tesseract.png",
+
+            "category":"Dimensioni",
+
+            "difficulty":3,
+
+            "enabled":true
+
+        },
+
+        {
+
+            "id":"blackhole",
+
+            "title":"Curvatura dello spazio-tempo",
+
+            "module":"black_hole",
+
+            "icon":"blackhole.png",
+
+            "category":"Relatività Generale",
+
+            "difficulty":4,
+
+            "enabled":true
+
+        },
+        
+        {
+        
+            "id": "wormhole",
+            
+            "title": "Buchi nella mela: foratura dello spazio-tempo",
+            
+            "module": "wormhole",
+            
+            "icon": "🌀",
+            
+            "category": "Relatività Generale",
+            
+            "difficulty": 4,
+            
+            "enabled": true
+        }
+
+    ]
+
+}
